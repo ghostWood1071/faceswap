@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html ng-app="imageApp">
+<head>
+  <meta charset="UTF-8">
+  <title>Image Tool</title>
+  <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.8.2/angular.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: sans-serif; margin: 0; padding: 0; display: flex; }
+    .sidebar {
+      width: 250px;
+      background: #f4f4f4;
+      border-right: 1px solid #ccc;
+      padding: 1rem;
+      display: none;
+    }
+    .sidebar.open { display: block; }
+    .main-content { flex: 1; padding: 1rem; }
+    .menu-toggle { position: absolute; top: 10px; left: 10px; z-index: 999; }
+    .menu-list { list-style: none; padding: 0; }
+    .menu-list li { padding: 0.5rem 0; cursor: pointer; }
+    .flex-row { display: flex; flex-wrap: wrap; gap: 1rem; }
+    .panel { flex: 1; min-width: 300px; border: 1px solid #ccc; padding: 1rem; border-radius: 8px; }
+    .image-thumb { max-width: 100%; height: auto; margin-bottom: 0.5rem; cursor: pointer; border: 2px solid transparent; }
+    .image-thumb.selected { border-color: #007bff; }
+    .image-list { max-height: 200px; overflow-y: auto; }
+    button { padding: 0.5rem 1rem; margin-right: 1rem; }
+    img.preview { max-width: 100%; border: 1px solid #ddd; border-radius: 4px; }
+    .status-label { margin-top: 0.5rem; font-weight: bold; }
+    @media (max-width: 768px) {
+      body { flex-direction: column; }
+      .sidebar { width: 100%; border-right: none; border-bottom: 1px solid #ccc; }
+    }
+  </style>
+</head>
+<body ng-controller="MainCtrl">
+  <button class="menu-toggle" ng-click="menuOpen = !menuOpen">☰ Menu</button>
+  <div class="sidebar" ng-class="{'open': menuOpen}">
+    <h3>Danh sách trang</h3>
+    <ul class="menu-list">
+      <li ng-repeat="page in pages" ng-click="goToPage(page)">{{page.name}}</li>
+    </ul>
+  </div>
+
+  <div class="main-content">
+    <!-- Top Album (single image select) -->
+    <div class="flex-row">
+      <div class="panel">
+        <h3>Ảnh nguồn (chọn 1)</h3>
+        <div class="image-list">
+          <button ng-click="back_src()">back</button>
+          <div ng-repeat="img in sourceImages">
+            <div style="display: flex;" ng-class="{'selected': selectedSource === img}" ng-click="selectSource(img)">
+              <img ng-src="{{img.url}}" style="width:50px; height:50px; object-fit:contain;" class="image-thumb" >
+              <p>{{img.url}}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Preview ảnh nguồn</h3>
+        <img ng-if="selectedSource" style="width:100px; height:100px; object-fit:contain;" ng-src="{{selectedSource.url}}" class="preview">
+      </div>
+    </div>
+
+    <!-- Bottom Album (multi-select) -->
+    <div class="flex-row">
+      <div class="panel">
+        <h3>Ảnh mục tiêu (chọn nhiều hoặc 1 thư mục)</h3>
+        <div class="image-list">
+          <button ng-click="back_target()">back</button>
+          <div ng-repeat="img in targetImages">
+            <div style="display: flex;" ng-class="{'selected': selectedTargets.includes(img)}" ng-click="toggleTarget(img)">
+              <img ng-src="{{img.url}}" style="width:50px; height:50px; object-fit:contain;" class="preview" >
+              <p>{{img.url}}</p>
+            </div>
+          </div>
+        </div>
+        <div class="status-label" ng-if="selectionType">Loại lựa chọn: {{ selectionType }}</div>
+      </div>
+      <div class="panel">
+        <h3>Preview ảnh mục tiêu</h3>
+        <div class="flex-row">
+          <img ng-repeat="img in selectedTargets" ng-src="{{img.url}}" class="preview" style="max-width: 100px;">
+        </div>
+      </div>
+    </div>
+
+    <!-- Parameters and Actions -->
+    <div class="panel">
+      <label>Tham số từ:</label>
+      <input type="number" min="0" max="300" ng-model="paramMin">
+      <label>đến:</label>
+      <input type="number" min="0" max="300" ng-model="paramMax">
+    </div>
+
+    <div class="panel">
+      <button ng-click="callProcessApi()">Thực hiện xử lý</button>
+      <button ng-click="downloadResult()">Tải kết quả</button>
+    </div>
+    <div>
+      {{task_swap_ids}}
+    </div>
+    <div>
+      <img ng-repeat="img in swapResults" ng-src="{{img}}" class="preview" style="max-width: 100px;">
+    </div>
+  </div>
+
+  <script>
+    source_page_stack = []
+    target_page_stack = []
+    angular.module('imageApp', [])
+      .controller('MainCtrl', ['$scope', '$http', function($scope, $http) {
+        $scope.sourceImages = [];
+        $scope.targetImages = [];
+        $scope.selectedSource = null;
+        $scope.selectedTargets = [];
+        $scope.paramMin = 0;
+        $scope.paramMax = 300;
+        $scope.menuOpen = false;
+        $scope.selectionType = '';
+        $scope.curentFolder = null
+        $scope.pages = [
+          { name: 'Trang chính' },
+          { name: 'Ảnh đã xử lý' },
+          { name: 'Cấu hình' }
+        ];
+
+        $scope.goToPage = function(page) {
+          alert('Chuyển đến: ' + page.name);
+        };
+
+        function isFileUrl(url) {
+          return url.startsWith("https://")
+        }
+
+        function get_src(paths){
+            results = []
+            for (path of paths){
+                check = isFileUrl(path)
+                type = 'img'
+                if (check == false)
+                    type = 'folder'
+                results.push({"url": path, "type": type})
+            }
+            return results
+        }
+
+        $scope.loadSource = (path)=> {
+          $http.get(
+            '/api/source-list',
+            {
+                "params": {
+                    "path": path
+                }
+            }
+          ).then(res => {
+            paths = res.data
+            results = get_src(paths)
+            $scope.sourceImages = results
+          });
+
+        }
+
+        $scope.loadTarget = (path)=> {
+          $http.get(
+            '/api/target-list',
+            {
+                "params": {
+                    "path": path
+                }
+            }
+          ).then(res => {
+            paths = res.data
+            results = get_src(paths)
+            $scope.targetImages = results
+          });
+
+        }
+
+        $scope.selectSource = function(img) {
+          if(img.type == 'folder'){
+            $scope.loadSource(img.url)
+            source_page_stack.push($scope.currentSourceFolder)
+            $scope.currentSourceFolder = img.url
+          } else {
+            $scope.selectedSource = img;
+          }
+        };
+
+        $scope.back_src = () =>{
+          $scope.currentSourceFolder = source_page_stack.pop()
+          $scope.loadSource($scope.currentSourceFolder)
+        }
+
+        $scope.back_target = () =>{
+          $scope.currentTargetFolder = target_page_stack.pop()
+          $scope.loadTarget($scope.currentTargetFolder)
+        }
+
+        $scope.toggleTarget = function(img) {
+          if(img.type == 'img') {
+            const idx = $scope.selectedTargets.indexOf(img);
+            if (idx > -1) {
+              $scope.selectedTargets.splice(idx, 1);
+            } else {
+              $scope.selectedTargets.push(img);
+            }
+          } else {
+            $scope.loadTarget(img.url)
+            target_page_stack.push($scope.currentTargetFolder)
+            $scope.currentTargetFolder = img.url
+          }
+        };
+
+        $scope.callProcessApi = function() {
+          if (!$scope.selectedSource || $scope.selectedTargets.length === 0) {
+            alert("Vui lòng chọn ảnh nguồn và ít nhất 1 ảnh mục tiêu hoặc thư mục.");
+            return;
+          }
+          const data = {
+            source: $scope.selectedSource.url,
+            targets: $scope.selectedTargets.map(x=> x.url),
+            paramRange: [$scope.paramMin, $scope.paramMax]
+          };
+          $http.post('/api/process', data).then(
+            (res) => {
+              $scope.task_swap_ids = res.data
+            },
+            () => alert("❌ Thất bại!")
+          );
+        };
+
+        $scope.downloadResult = function() {
+          $http.post('/api/download', $scope.task_swap_ids).then(
+            (res) => {
+              img_results = []
+              for(r of res.data){
+                if (!r){
+                  img_results.push('')
+                } else{
+                  img_results.push(r.result)
+                }
+              }
+              $scope.swapResults = img_results
+            },
+            () => alert("❌ Tải thất bại!")
+          );
+        };
+
+        $scope.loadSource(null)
+        $scope.loadTarget(null)
+      }]);
+  </script>
+</body>
+</html>

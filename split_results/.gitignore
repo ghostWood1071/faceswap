@@ -1,0 +1,5 @@
+# Ignore tất cả file trong thư mục hiện tại
+*
+
+# Nhưng vẫn giữ lại chính file .gitignore này
+!.gitignore
